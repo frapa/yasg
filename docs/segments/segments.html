@@ -1,0 +1,89 @@
+<html>
+<head>
+    <title>Segments</title>
+    
+    <style>
+        body {
+            margin: 0;
+        }
+        
+        #drawing {
+            margin: auto;
+            background: #fff;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+    
+    <script src="raphael-min.js"></script>
+    <script>
+        var paper = undefined;
+        var bef = undefined;
+        var segments = [];
+        
+        function segment_intersection(l1, l2) {
+            var x1 = l1[0][0];
+            var y1 = l1[0][1];
+            var ax = l1[1][0];
+            var ay = l1[1][1];
+            
+            var x2 = l2[0][0];
+            var y2 = l2[0][1];
+            var bx = l2[1][0];
+            var by = l2[1][1];
+            
+            var vx = ax - x1;
+            var vy = ay - y1;
+            var ux = bx - x2;
+            var uy = by - y2;
+            
+            var s = ((y2 - y1) - ((x2 - x1) * vy) / vx) * vx / (ux*vy - uy*vx);
+            var t = (x2 - x1 + s*ux) / vx;
+            
+            // check if segments collide
+            if (0 <= t && t <= 1 && 0 <= s && s <= 1) {
+                return [x1 + vx*t, y1 + vy*t];
+            } else {
+                return false;
+            }
+        }
+        
+        function press(e) {
+            var x = e.clientX;
+            var y = e.clientY;
+            var c = paper.circle(x, y, 5).attr({fill: "#59F", "stroke": "#59F"});
+            
+            if (bef != undefined) {
+                var path = paper.path("M" + bef["x"] + "," + bef["y"] + "L" + x + "," + y);
+                path.attr({"stroke-width": 2, "stroke": "#59F"});
+                
+                segments.push([[bef["x"], bef["y"]], [x, y]]);
+                
+                // check intersections
+                for (var i = 0; i != segments.length; i++) {
+                    for (var j = 0; j != segments.length; j++) {
+                        ints = segment_intersection(segments[i], segments[j]);
+                        
+                        if (ints) {
+                            var c = paper.circle(ints[0], ints[1], 5).attr({fill: "#f00", "stroke": "#f00"});
+                        }
+                    }
+                }
+                
+                bef = undefined;
+            } else {
+                bef = {"x":x, "y":y};
+            }
+        }
+        
+        function init() {
+            paper = Raphael("drawing", window.innerWidth, window.innerHeight);
+        }
+        
+        window.onload = init;
+    </script>
+</head>
+<body>
+    <div id="drawing" onclick="press(event)"></div>
+</body>
+</html>
