@@ -7,92 +7,44 @@ import igraph
 import map as m
 import perlin
 
-borders = (
-    ((0, 0), (0, 1)),
-    ((0, 0), (1, 0)),
-    ((1, 0), (1, 1)),
-    ((0, 1), (1, 1))
-)
-
-def segment_intersection(l1, l2):
-    (x1, y1), (ax, ay) = l1
-    (x2, y2), (bx, by) = l2
-    
-    vx = ax - x1
-    vy = ay - y1
-    ux = bx - x2
-    uy = by - y2
-    
-    s = ((y2 - y1) - ((x2 - x1) * vy) / vx) * vx / (ux*vy - uy*vx)
-    t = (x2 - x1 + s*ux) / vx
-    
-    # check if segments collide
-    if 0 <= t <= 1 and 0 <= s <= 1:
-        return (x1 + vx*t, y1 + vy*t)
+def check_region(vertices):
+    """Checks if a region is completely contained
+    inside the [0, 1]×[0, 1] area."""
+    if -1 in vertices:
+        return False
     else:
-        return None
+        # We must check that the vertices are inside the [0, 1]×[0, 1] area.
+        for (x, y) in vertices:
+            # If point is not inside...
+            if not (0 < x < 1) or not (0 < y < 1):
+                return False
+        
+        return True
 
 def relaxation(voronoi):
     """Takes a scipy.spatial.Voronoi and returns a new voronoi
-    diagram with points relaxed (= make polygons more regular)
+    diagram with points relaxed (= make polygons more regular).
     """
     new_points = []
-    for n, p in enumerate(voronoi.point_region):
-        r = voronoi.regions[p] # Indices of the Voronoi vertices forming each Voronoi region
-        v = voronoi.vertices[r]
+    for n, r in enumerate(voronoi.point_region):
+        # Indices of the Voronoi vertices forming each Voronoi region
+        vi = voronoi.regions[r]
+        v = voronoi.vertices[vi]
         
-        # We must check that the vertices are inside the [0, 1]×[0, 1] area
-        # In case some of them are out we use the intersection of ridges with
-        # the borders of the [0, 1]×[0, 1] box as vertices. To do this we
-        # overwrite the `v` variable with new points.
-        nv = []
-        infinite_ridges_done = False
-        for (x, y), i in zip(v, r):
-            # If point is inside leave it as is.
-            if 0 < x < 1 and 0 < y < 1 and i != -1:
-                nv.append(numpy.array([x, y]))
-            # If the point is at infinity...
-            elif i == -1 and not infinite_ridges_done:
-                # We want to get the other point of each semi-infinite ridge
-                h = []
-                for e in v:
-                    # number of ridges with vertex e in region r
-                    num_ridges_in_region = 0
-                    for rg in voronoi.ridge_vertices:
-                        # If the vertex is in ridge and the other vertex of the
-                        # ridge is in the region, count the ridge as a region's
-                        # ridge.
-                        if e in rg and rg[1 - rg.index(e)] in r:
-                            num_ridges_in_region += 1
-                    
-                    if num_ridges_in_region == 1:
-                        h.append(e)
+        # Region is contained in the [0, 1]×[0, 1] area...
+        if check_region(v):
+            # New point is the average of the region's vertices
+            np = [numpy.mean(v[:, 0]), numpy.mean(v[:, 1])]
                 
-                # Now we find the regions on the other side of the 
-            # Otherwise change it to intersection
-            else:
-                # Find other vertex that make the ridge
-                rgs = [voronoi.vertices[rg]
-                    for rg in voronoi.ridge_vertices if i in rg]
-                
-                # Find intersection with borders
-                for b in borders:
-                    for rg in rgs:
-                        ints = segment_intersection(rg, b)
-                        if ints is not None:
-                            nv.append(ints)
-
-        v = numpy.array(nv)
-        
-        # New point is the average of the region's vertices
-        np = [numpy.mean(v[:, 0]), numpy.mean(v[:, 1])]
-        
-        new_points.append(np)
+            new_points.append(np)
+        else:
+            # skip this region
+            new_points.append(voronoi.points[n])
 
     new_points = numpy.array(new_points)
     return scipy.spatial.Voronoi(new_points)
 
-def generate_map(npoly=100, nrelax=1):
+def generate_map(npoly=200, nrelax=2):
     """Generate a map with the given preset and number of polygons
 
     Arguments:
@@ -108,10 +60,10 @@ def generate_map(npoly=100, nrelax=1):
     # Create Voronoi diagram of the points
     vor = scipy.spatial.Voronoi(points)
 
-    import matplotlib.pyplot as plt
-    scipy.spatial.voronoi_plot_2d(vor)
-    plt.axes().set_xlim((0, 1))
-    plt.axes().set_ylim((0, 1))
+    #import matplotlib.pyplot as plt
+    #scipy.spatial.voronoi_plot_2d(vor)
+    #plt.axes().set_xlim((0, 1))
+    #plt.axes().set_ylim((0, 1))
 
     # Relax the diagram nrelax time, to make polygons more regular
     for i in range(nrelax):
@@ -120,38 +72,58 @@ def generate_map(npoly=100, nrelax=1):
     # Now, lets create the map object!
     world = m.Map()
 
-    # Add vertices
-    world.vertices.add_vertices(len(vor.vertices))
-    for n, (x, y) in enumerate(vor.vertices):
+    # Add the polygons but only those that are inside the [0,1]x[0,1] area.
+    # First we get the regions which are inside (with vertices!)
+    regions = []
+    verts = set()
+    for n in range(len(vor.points)):
+        vi = vor.regions[vor.point_region[n]]
+        v = vor.vertices[vi]
+        
+        # If region is inside
+        if check_region(v):
+            regions.append(n)
+            
+            verts = verts.union(tuple(vi))
+    
+    # Second: add vertices of the regions that are insides
+    dict_vert_node = {}
+    world.vertices.add_vertices(len(verts))
+    v_list = list(verts)
+    for n, ((x, y), vi) in enumerate(zip(vor.vertices[v_list], v_list)):
+        dict_vert_node[vi] = n
+        
         world.vertices.vs[n]["x"] = x
         world.vertices.vs[n]["y"] = y
-
+    
     # Add edges between vertices
     for v1, v2 in vor.ridge_vertices:
-        if v1 != -1 and v2 != -1:
-            world.vertices.add_edges((v1, v2))
-
-    # Add the polygons
-    world.polygons.add_vertices(len(vor.points))
-    for n, (x, y) in enumerate(vor.points):
+        if v1 in verts and v2 in verts:
+            world.vertices.add_edges((dict_vert_node[v1], dict_vert_node[v2]))
+    
+    # Then we add the polygons to the map
+    world.polygons.add_vertices(len(regions))
+    for n, i in enumerate(regions):
+        (x, y) = vor.points[i]
+        
         world.polygons.vs[n]["x"] = x
         world.polygons.vs[n]["y"] = y
         
         # Get vertices of each polygon and link them
-        region = vor.point_region[n]
-        vs = vor.regions[region]
-
-        #world.polygons[n]["vertices"] = list([world.vertices[i] for i in vs if i >= 0])
+        vi = vor.regions[vor.point_region[i]]
+        
+        world.polygons.vs[n]["vertices"] = [world.vertices.vs[dict_vert_node[i]]
+            for i in vi]
 
     # Add connections between polygons
-    for p1, p2 in vor.ridge_points:
-        if p1 != -1 and p2 != -1:
-            world.polygons.add_edges((p1, p2))
+    #for p1, p2 in vor.ridge_points:
+    #    if p1 != -1 and p2 != -1:
+    #        world.polygons.add_edges((p1, p2))
 
-    scipy.spatial.voronoi_plot_2d(vor)
-    plt.axes().set_xlim((0, 1))
-    plt.axes().set_ylim((0, 1))
-    plt.show()
+    #scipy.spatial.voronoi_plot_2d(vor)
+    #plt.axes().set_xlim((0, 1))
+    #plt.axes().set_ylim((0, 1))
+    #plt.show()
 
     return world
 
